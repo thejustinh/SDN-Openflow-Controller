@@ -1,0 +1,6 @@
+This controller supports:
+- Arbitrary switch graphs, including loops and multiple switches
+- Broadcast packets traverse a MST
+- Unicast traffic follows the shortest path between the source and destination
+- Multicast traffic is treated as broadcast traffic
+- Dynamic topologies (e.g., links coming and going while the controller is running)
