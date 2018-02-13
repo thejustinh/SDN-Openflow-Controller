@@ -27,12 +27,12 @@ void printOFPHdr(struct ofp_header * ofp_hdr)
 void estOFConnection(int clientSocket, struct ofp_header * recvHello)
 {
     uint8_t hPacket[OFP_HDR_LEN];
-    uint8_t frequestPacket[sizeof(struct ofp_switch_features)];
+    uint8_t frequestPacket[OFP_HDR_LEN];
     struct ofp_header sendHello;
     struct ofp_header sendFeatures;
 
     memset(hPacket, 0, OFP_HDR_LEN);
-    memset(frequestPacket, 0, sizeof(struct ofp_switch_features));
+    memset(frequestPacket, 0, OFP_HDR_LEN);
 
     sendHello.version = (uint8_t)1;
     sendHello.type = (uint8_t)0;
@@ -52,7 +52,7 @@ void estOFConnection(int clientSocket, struct ofp_header * recvHello)
     sendFeatures.xid = htonl((uint32_t)2323);
     memcpy(frequestPacket, &sendFeatures, 8);
 
-    if (send(clientSocket,frequestPacket,sizeof(frequestPacket), 0) < 0)
+    if (send(clientSocket, frequestPacket, OFP_HDR_LEN, 0) < 0)
     {
         perror("send call");
         exit(-1);
@@ -62,22 +62,45 @@ void estOFConnection(int clientSocket, struct ofp_header * recvHello)
 void setConfig(int clientSocket)
 {
     uint8_t cPacket[12];
+    uint8_t bPacket[OFP_HDR_LEN];
     struct ofp_header sendConfig;
+    struct ofp_header sendBarrier;
+    uint16_t configFlag = htons(0x0000);
+    uint16_t maxBytes = htons(0x0080);
 
     memset(cPacket, 0, 12);
+    memset(bPacket, 0, OFP_HDR_LEN);
+
     sendConfig.version = (uint8_t)1;
     sendConfig.type = (uint8_t)9;
     sendConfig.length = htons((uint16_t)12);
-    sendConfig.xid = htonl((uint32_t)1111);
-    memcpy(cPacket, &sendConfig, 12);
+    sendConfig.xid = htonl((uint32_t)3);
+    memcpy(cPacket, &sendConfig, 8);
+    memcpy(cPacket + 8, &configFlag, 2);
+    memcpy(cPacket + 10, &maxBytes, 2);
 
-    printf("\nSending setup config..\n");
+    printf("\n---->>Sending setup config..\n");
     if (send(clientSocket, cPacket, sizeof(cPacket), 0) < 0)
     {
         perror("send call");
         exit(-1);
     }
-    printf("\nSent config setup!!!!\n");
+    printf("---->>Sent config setup!!!!\n");
+
+    sendBarrier.version = (uint8_t)1;
+    sendBarrier.type = (uint8_t)18;
+    sendBarrier.length = htons((uint16_t)8);
+    sendBarrier.xid = htonl((uint32_t)5);
+    memcpy(bPacket, &sendBarrier, 8);
+
+    printf("\n---->>Sending Barrier request packet..\n");
+    if (send(clientSocket, bPacket, sizeof(bPacket), 0) < 0)
+    {
+        perror("send call");
+        exit(-1);
+    }
+    printf("---->>Sent Barrier Requst!\n");
+
 }
 
 /**
@@ -113,13 +136,25 @@ int recvData(int clientSocket)
     packetLen = ntohs(ofp_hdr->length);
 
     /* Printing Packet for Debugging purposes */
+    printf("\n**********\n  New Packet\n**********\n");
     printf("\nPacket Length: %d\n", packetLen);
     printf("Bytes Read: %d\n", numBytes);
     printf("left to read: %d\n", packetLen - numBytes);
-    printOFPHdr(ofp_hdr);
-
     
-    printf("Bytes read in payload: %d\n", numBytes);
+    if (packetLen - numBytes > 0) 
+    {
+        printf("Reading additional bytes...\n");
+        /* TEMP IMPLEMENTATION */
+        /* If theres anything in the TCP buffer, read the rest of the bytes */
+        if ((numBytes = recv(clientSocket, payload, packetLen-numBytes, MSG_WAITALL)) < 0)
+        {
+            perror("recv call");
+            exit(-1);
+        }
+        printf("Additional bytes read: %d\n", numBytes);
+    }
+
+    printOFPHdr(ofp_hdr);
 
     /* Execute Action based on OF Packet Type */
     if (type == OF_HELLO)
@@ -127,18 +162,12 @@ int recvData(int clientSocket)
     else if (type == OF_FEATURE_REPLY)
         //printf("Received features reply!\n");
         setConfig(clientSocket);
-    
+    else if (type == OF_ECHO_REQUEST)
+        sendEchoReply(clientSocket);
     else
-        printf("Dont know openflow type\n"); 
+        printf("Dont know openflow type... do i care?\n"); 
 
 
-    /* TEMP IMPLEMENTATION */
-    /* If theres anything in the TCP buffer, read the rest of the bytes */
-    if ((numBytes = recv(clientSocket, payload, packetLen - numBytes, MSG_WAITALL)) < 0)
-    {
-        perror("recv call");
-        exit(-1);
-    }
 
     return 1;
 }

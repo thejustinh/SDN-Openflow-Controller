@@ -24,6 +24,7 @@
 /* OpenFlow Types */
 #define OF_HELLO 0
 #define OF_FEATURE_REPLY 6
+#define OF_ECHO_REQUEST 2
 
 /* Ethernet Header */
 struct ethernet_header {
