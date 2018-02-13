@@ -4,12 +4,144 @@
  * CPE 465 - Program 2
  *
  * OpenFlow Controller
+ * controller.c
  **/
 
 #include "controller.h"
 #include "networks.h"
 
 #define DEBUG_FLAG 1
+
+void printOFPHdr(struct ofp_header * ofp_hdr)
+{
+    if (ofp_hdr != NULL) 
+    {
+        printf("\nOF Packet Received:....\n");
+        printf("\tOF Version: %d\n", ofp_hdr->version);
+        printf("\tOF Type: %d\n", ofp_hdr->type);
+        printf("\tOF length: %d\n", ntohs(ofp_hdr->length));
+        printf("\tOF XID: %d\n", ntohl(ofp_hdr->xid));
+    }
+}
+
+void estOFConnection(int clientSocket, struct ofp_header * recvHello)
+{
+    uint8_t hPacket[OFP_HDR_LEN];
+    uint8_t frequestPacket[sizeof(struct ofp_switch_features)];
+    struct ofp_header sendHello;
+    struct ofp_header sendFeatures;
+
+    memset(hPacket, 0, OFP_HDR_LEN);
+    memset(frequestPacket, 0, sizeof(struct ofp_switch_features));
+
+    sendHello.version = (uint8_t)1;
+    sendHello.type = (uint8_t)0;
+    sendHello.length = htons((uint16_t)8);
+    sendHello.xid = recvHello->xid;
+    memcpy(hPacket, &sendHello, 8);
+
+    if (send(clientSocket, hPacket, sizeof(hPacket), 0) < 0) 
+    {
+        perror("send call");
+        exit(-1);
+    }
+
+    sendFeatures.version = (uint8_t)1;
+    sendFeatures.type = (uint8_t)5;
+    sendFeatures.length = htons((uint16_t)8);
+    sendFeatures.xid = htonl((uint32_t)2323);
+    memcpy(frequestPacket, &sendFeatures, 8);
+
+    if (send(clientSocket,frequestPacket,sizeof(frequestPacket), 0) < 0)
+    {
+        perror("send call");
+        exit(-1);
+    }
+}
+
+void setConfig(int clientSocket)
+{
+    uint8_t cPacket[12];
+    struct ofp_header sendConfig;
+
+    memset(cPacket, 0, 12);
+    sendConfig.version = (uint8_t)1;
+    sendConfig.type = (uint8_t)9;
+    sendConfig.length = htons((uint16_t)12);
+    sendConfig.xid = htonl((uint32_t)1111);
+    memcpy(cPacket, &sendConfig, 12);
+
+    printf("\nSending setup config..\n");
+    if (send(clientSocket, cPacket, sizeof(cPacket), 0) < 0)
+    {
+        perror("send call");
+        exit(-1);
+    }
+    printf("\nSent config setup!!!!\n");
+}
+
+/**
+ * Method to receive data from socket.
+ *
+ * @param socket descriptor that we are reading from
+ * @return 1 on success
+ **/
+int recvData(int clientSocket)
+{
+    uint8_t packet[OFP_HDR_LEN];
+    uint16_t packetLen = 0;
+    uint8_t type;
+    int numBytes = 0;
+    struct ofp_header *ofp_hdr = NULL;
+
+    // Dump buffer
+    uint8_t payload[1500];
+
+    memset(packet, 0, OFP_HDR_LEN);
+
+    /* Read in only the header */
+    if ((numBytes = recv(clientSocket, packet, OFP_HDR_LEN, MSG_WAITALL)) <= 0)
+    {
+        if (numBytes != 0)
+            exit(-1);
+        return 0;
+    }
+
+    /* Read in OF Packet Contents */
+    ofp_hdr = (struct ofp_header *) packet;
+    type = ofp_hdr->type;
+    packetLen = ntohs(ofp_hdr->length);
+
+    /* Printing Packet for Debugging purposes */
+    printf("\nPacket Length: %d\n", packetLen);
+    printf("Bytes Read: %d\n", numBytes);
+    printf("left to read: %d\n", packetLen - numBytes);
+    printOFPHdr(ofp_hdr);
+
+    
+    printf("Bytes read in payload: %d\n", numBytes);
+
+    /* Execute Action based on OF Packet Type */
+    if (type == OF_HELLO)
+        estOFConnection(clientSocket, ofp_hdr);
+    else if (type == OF_FEATURE_REPLY)
+        //printf("Received features reply!\n");
+        setConfig(clientSocket);
+    
+    else
+        printf("Dont know openflow type\n"); 
+
+
+    /* TEMP IMPLEMENTATION */
+    /* If theres anything in the TCP buffer, read the rest of the bytes */
+    if ((numBytes = recv(clientSocket, payload, packetLen - numBytes, MSG_WAITALL)) < 0)
+    {
+        perror("recv call");
+        exit(-1);
+    }
+
+    return 1;
+}
 
 void handleConnections(int sd)
 {
@@ -50,7 +182,7 @@ void handleConnections(int sd)
 
                 else 
                 {
-                    printf("received some data\n");
+                    recvData(clientSocket);
                 }
             }
         }
@@ -69,5 +201,3 @@ int main(int argc, char * argv[])
     handleConnections(sd);
     return 0;
 }
-
-
