@@ -55,6 +55,7 @@ int tcpAccept(int server_socket, int debugFlag)
 int tcpSetup(int portNumber)
 {
     int server_socket = 0; 
+    int optval = 1;
     struct sockaddr_in6 server;     // Socket address for local side
     socklen_t len = sizeof(server); // length of local address
 
@@ -69,6 +70,13 @@ int tcpSetup(int portNumber)
     server.sin6_family = AF_INET6;
     server.sin6_addr = in6addr_any; // Wildcard Machine Address
     server.sin6_port = htons(portNumber);
+
+    /* Added to resue address */
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) 
+    {
+        perror("setsockopt()");
+        exit(1);
+    }
 
     /* Bind the name (address) to a port */
     if (bind(server_socket, (struct sockaddr *) &server, sizeof(server)) < 0)
@@ -91,8 +99,6 @@ int tcpSetup(int portNumber)
     }
 
     printf("Controller is using port: %d\n", ntohs(server.sin6_port));
-    printf("Controller is using IP: %s\n", 
-            getIPAddressString(server.sin6_addr.s6_addr));
 
     return server_socket;
 }
