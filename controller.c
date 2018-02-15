@@ -153,6 +153,7 @@ void setConfig(int clientSocket)
     memcpy(cPacket + 8, &configFlag, 2);
     memcpy(cPacket + 10, &maxBytes, 2);
 
+
     //printf("\n---->>Sending setup config..\n");
     if (send(clientSocket, cPacket, sizeof(cPacket), 0) < 0)
     {
@@ -160,6 +161,7 @@ void setConfig(int clientSocket)
         exit(-1);
     }
     //printf("---->>Sent config setup!!!!\n");
+
 
     sendBarrier.version = (uint8_t)1;
     sendBarrier.type = (uint8_t)18;
@@ -174,6 +176,7 @@ void setConfig(int clientSocket)
         exit(-1);
     }
     //printf("---->>Sent Barrier Requst!\n");
+
 }
 
 /** 
@@ -217,7 +220,6 @@ int recvData(int clientSocket)
     // Dump buffer
     uint8_t payload[1000];
 
-    memset(payload, 0, 1000);
     memset(packet, 0, OFP_HDR_LEN);
 
     /* Read in only the header */
@@ -238,10 +240,13 @@ int recvData(int clientSocket)
     //printf("\nPacket Length: %d\n", packetLen);
     //printf("Bytes Read: %d\n", numBytes);
     //printf("left to read: %d\n", packetLen - numBytes);
-    
+    //printf("Type: %d\n", type);
+    //printf("From client socket: %d\n", clientSocket);
+
     /* If theres anything in the TCP buffer, read the rest of the bytes */ 
     if (packetLen - numBytes > 0) 
     {
+        memset(payload, 0, 1000);
         //printf("Reading additional bytes...\n");
         if ((numBytes = recv(clientSocket, payload, packetLen-numBytes, MSG_WAITALL)) < 0)
         {
@@ -258,9 +263,11 @@ int recvData(int clientSocket)
         estOFConnection(clientSocket, ofp_hdr);
     } else if (type == OF_FEATURE_REPLY) {
         reportFeatures(ofp_hdr, payload);
-        setConfig(clientSocket);
+        //setConfig(clientSocket);
     } else if (type == OF_ECHO_REQUEST) {
+
         sendEchoReply(clientSocket, ofp_hdr);
+
     } else if (type == OF_PACKET_IN) {
         printf("RECEIVED PACKET_IN\n");
     } else if (type == OF_PORT_STATUS) {
@@ -293,7 +300,7 @@ void handleConnections(int sd)
 {
     int clientSocket = 0;
     int nfds = 0, i = 0;
-    pthread_t thread_id;
+    //pthread_t thread_id;
 
     fd_set set;   // set
     fd_set t_set; // temp set
@@ -327,18 +334,18 @@ void handleConnections(int sd)
                     if (nfds < clientSocket) nfds = clientSocket;
 
                     /* PTHREAD IMPLEMENTATION */
-                    if (pthread_create(&thread_id, NULL, connection_handler, 
+                    /*if (pthread_create(&thread_id, NULL, connection_handler, 
                                 (void*)&clientSocket) <0)
                     {
                         perror("could not create thread");
                         exit(-1);
-                    }
+                    }*/
                 }
 
                 else 
                 {
                     // Turned for for pthread_implementation
-                    //recvData(clientSocket);
+                    recvData(i);
                 }
             }
         }

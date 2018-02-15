@@ -1,6 +1,10 @@
+To run this program:
+% ./controller <port number>
+
 This controller supports:
-- Arbitrary switch graphs, including loops and multiple switches
-- Broadcast packets traverse a MST
-- Unicast traffic follows the shortest path between the source and destination
-- Multicast traffic is treated as broadcast traffic
-- Dynamic topologies (e.g., links coming and going while the controller is running)
+- OpenFlow version 1.0
+- [In progress] Arbitrary switch graphs, including loops and multiple switches
+- [In progress] Broadcast packets traverse a MST
+- [In progress] Unicast traffic follows the shortest path between the source and destination
+- [In progress] Multicast traffic is treated as broadcast traffic
+- [In progress] Dynamic topologies (e.g., links coming and going while the controller is running)
