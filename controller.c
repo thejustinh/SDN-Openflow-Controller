@@ -272,6 +272,18 @@ int recvData(int clientSocket)
     return 1;
 }
 
+/** 
+ * PTHREAD_CREATE
+ **/
+void * connection_handler(void * socket_desc)
+{
+    int *clientSock = socket_desc;
+    while(1)
+        recvData(*clientSock);
+
+    return 0;
+}
+
 /**
  * Method to handle as many switch connections to the controller.
  *
@@ -281,7 +293,8 @@ void handleConnections(int sd)
 {
     int clientSocket = 0;
     int nfds = 0, i = 0;
-   
+    pthread_t thread_id;
+
     fd_set set;   // set
     fd_set t_set; // temp set
 
@@ -312,17 +325,26 @@ void handleConnections(int sd)
                     FD_SET(clientSocket, &set);
 
                     if (nfds < clientSocket) nfds = clientSocket;
+
+                    /* PTHREAD IMPLEMENTATION */
+                    if (pthread_create(&thread_id, NULL, connection_handler, 
+                                (void*)&clientSocket) <0)
+                    {
+                        perror("could not create thread");
+                        exit(-1);
+                    }
                 }
 
                 else 
                 {
-                    recvData(clientSocket);
+                    // Turned for for pthread_implementation
+                    //recvData(clientSocket);
                 }
             }
         }
     }
 
-    close(clientSocket);
+    //close(clientSocket);
 }
 
 /**
@@ -339,8 +361,22 @@ void terminate()
  **/
 int main(int argc, char * argv[]) 
 {
+    int port;
+
+    if (argc != 2) 
+    {
+        printf("usage: ./controller <port number>\n");
+        exit(-1);
+    }
+
+    if ((port = atoi(argv[1])) == 0)
+    {
+        printf("Please enter a valid port number\n");
+        exit(-1);
+    }
+
     /* Set up the TCP connection on port 6633 */
-    sd = tcpSetup(6633);    
+    sd = tcpSetup(port);    
 
     signal(SIGINT, terminate);
 

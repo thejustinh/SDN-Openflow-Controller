@@ -16,6 +16,7 @@
 #include <inttypes.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
 
 #include "openflow.h"
 
@@ -69,7 +70,7 @@ struct tcp_header {
 
 #if defined (__linux__)
 #  include <endian.h>
-#elif define(__FreeBSD__) || defined(__NetBSD__)
+#elif defined(__FreeBSD__) || defined(__NetBSD__)
 #  include <sys/endian.h>
 #elif defined(__OpenBSD__)
 #  include <sys/types.h>
