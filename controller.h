@@ -19,6 +19,8 @@
 #include <pthread.h>
 
 #include "openflow.h"
+#include "smartalloc.h"
+#include "myGraph.h"
 
 /* Header Or Address Lengths */
 #define ETHERNET_HDR_LEN 14

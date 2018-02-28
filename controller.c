@@ -14,6 +14,7 @@
 #define DEBUG_FLAG 1
 
 int sd = 0; // Server socket
+struct Graph * graph; // global graph
 
 /**
  * Method to test if we are receiving OpenFlow packets correctly.
@@ -203,6 +204,102 @@ void sendEchoReply(int clientSocket, struct ofp_header * ofp_hdr)
     }
 }
 
+
+
+
+/**
+ * Method to determine the ETHERTYPE of payload 
+ *
+ * @param payload of openflow packet which is the ethernet frame
+ **/
+
+
+/**
+ * Method to create packet out
+ **/
+void makeSendPacketOut(int clientSocket, struct ofp_packet_out * pkt_out, 
+        uint8_t * packet, uint8_t * payload, int packetLen, uint16_t output_port)
+{
+    uint8_t raw_pkt_in[packetLen]; 
+    uint16_t pkt_out_len;
+    uint16_t actions_len = (uint16_t)8;
+    uint16_t actions_type = (uint16_t) 0x0000;
+    uint8_t raw_action_hdr[sizeof(actions_len)];
+    uint32_t buffer_id = 0xffffffff;
+    static uint32_t xid = 15;
+    struct ofp_action_header * action_hdr;
+    struct ofp_packet_in * pkt_in;
+
+    memcpy(raw_pkt_in, packet, OFP_HDR_LEN);
+    memcpy(raw_pkt_in + OFP_HDR_LEN, payload, packetLen - OFP_HDR_LEN);
+    pkt_in = (struct ofp_packet_in *) raw_pkt_in; 
+
+    /* Action Struct */
+    memset(raw_action_hdr, 0, sizeof(actions_len));
+    memcpy(raw_action_hdr, &actions_len, 2);
+    memcpy(raw_action_hdr + 2, &actions_type, 2);
+    memcpy(raw_action_hdr + 4, &actions_len, 2);
+    memcpy(raw_action_hdr + 6, &output_port, 2);
+    action_hdr = (struct ofp_action_header *) raw_action_hdr;
+
+    /* PACKET OUT HDR */
+    pkt_out->header.version = (uint8_t)1;
+    pkt_out->header.type = (uint8_t)13;
+    pkt_out_len = OFP_HDR_LEN + sizeof(buffer_id) + sizeof(pkt_in->in_port) +
+        sizeof(actions_len) + sizeof(action_hdr) + ntohs(pkt_in->total_len);
+    pkt_out->header.length = htons((uint16_t) pkt_out_len);
+    pkt_out->header.xid = htonl((uint32_t) xid);
+
+    /* PACKET OUT STRUCT */    
+    pkt_out->buffer_id = htonl(buffer_id);
+    pkt_out->in_port = pkt_in->in_port;
+    pkt_out->actions_len = htons(actions_len);
+    memcpy(pkt_out->actions, raw_action_hdr, sizeof(raw_action_hdr));
+    memcpy(pkt_out->data, payload, packetLen - OFP_HDR_LEN);
+
+
+    // send packet out to switch socket
+    if (send(clientSocket, pkt_out, sizeof(pkt_out), 0) < 0) 
+    {
+        perror("send call");
+        exit(-1);
+    }
+    
+}
+
+/**
+ * Method to handle all OFP_Packet_In received
+ *
+ * @param socket - the socket of the switch to send the packet out to
+ * @param openflow header 
+ * @param openflow data (post header)
+ **/
+void handlePacketIn(int clientSocket, uint8_t *packet, 
+        uint8_t * payload, int packetLen)
+{
+    uint8_t raw_pkt_in[packetLen]; 
+    struct ofp_packet_in * pkt_in;
+    struct ofp_packet_out * pkt_out = smartalloc(sizeof(* pkt_out), "controller.c", 242, '\0');
+    memcpy(raw_pkt_in, packet, OFP_HDR_LEN);
+    memcpy(raw_pkt_in + OFP_HDR_LEN, payload, packetLen - OFP_HDR_LEN);
+    
+    // Get data from Packet In
+    pkt_in = (struct ofp_packet_in *) raw_pkt_in; 
+
+    printf("\tTotal Length: %d\n", ntohs(pkt_in->total_len));
+    printf("\tIn Port: %d\n", ntohs(pkt_in->in_port));
+    if (pkt_in->reason == 0x00) {
+        printf("\tNO MATCHING FLOW\n");
+        return;
+    } else {
+        printf("\tACTION\n");
+    }
+
+    // make packet out with output port of flood (0xfffb) 
+    makeSendPacketOut(clientSocket, pkt_out, packet, payload, 
+        packetLen, (uint16_t)0xfffb);
+}
+
 /**
  * Method to receive data from socket.
  *
@@ -216,14 +313,14 @@ int recvData(int clientSocket)
     uint8_t type;
     int numBytes = 0;
     struct ofp_header *ofp_hdr = NULL;
-
+    
     // Dump buffer
     uint8_t payload[1000];
 
     memset(packet, 0, OFP_HDR_LEN);
 
     /* Read in only the header */
-    if ((numBytes = recv(clientSocket, packet, OFP_HDR_LEN, MSG_WAITALL)) <= 0)
+    if ((numBytes = recv(clientSocket,packet,OFP_HDR_LEN,MSG_WAITALL))<=0)
     {
         if (numBytes != 0)
             exit(-1);
@@ -235,19 +332,11 @@ int recvData(int clientSocket)
     type = ofp_hdr->type;
     packetLen = ntohs(ofp_hdr->length);
 
-    /* Printing Packet for Debugging purposes */
-    //printf("\n**********\n  New Packet\n**********\n");
-    //printf("\nPacket Length: %d\n", packetLen);
-    //printf("Bytes Read: %d\n", numBytes);
-    //printf("left to read: %d\n", packetLen - numBytes);
-    //printf("Type: %d\n", type);
-    //printf("From client socket: %d\n", clientSocket);
-
     /* If theres anything in the TCP buffer, read the rest of the bytes */ 
     if (packetLen - numBytes > 0) 
     {
         memset(payload, 0, 1000);
-        //printf("Reading additional bytes...\n");
+        /* Reading additional bytes */
         if ((numBytes = recv(clientSocket, payload, packetLen-numBytes, MSG_WAITALL)) < 0)
         {
             perror("recv call");
@@ -256,8 +345,6 @@ int recvData(int clientSocket)
         //printf("Additional bytes read: %d\n", numBytes);
     }
 
-    //printOFPHdr(ofp_hdr);
-
     /* Execute Action based on OF Packet Type */
     if (type == OF_HELLO) {
         estOFConnection(clientSocket, ofp_hdr);
@@ -265,15 +352,21 @@ int recvData(int clientSocket)
         reportFeatures(ofp_hdr, payload);
         //setConfig(clientSocket);
     } else if (type == OF_ECHO_REQUEST) {
-
         sendEchoReply(clientSocket, ofp_hdr);
-
     } else if (type == OF_PACKET_IN) {
         printf("RECEIVED PACKET_IN\n");
+        // Determine if payload is arp reply (reply -> send flow mod)
+        //if (isArpReply(payload) == 1) {
+        //    printf("Send Flow mod\n");
+        //    printf("send packet out with 0xfff9 as output port\n");
+        //} else {
+            // packet outs will be flooded
+            handlePacketIn(clientSocket, packet, payload, packetLen);
+        //}
     } else if (type == OF_PORT_STATUS) {
         reportPort(ofp_hdr, payload);
     } else {
-        //printf("Received OpenFlow Packet Response not yet implemented\n"); 
+        // printf("not yet implemented\n"); 
         return 1;
     }
     return 1;
@@ -298,6 +391,7 @@ void * connection_handler(void * socket_desc)
  **/
 void handleConnections(int sd)
 {
+    static int switchID = 0;
     int clientSocket = 0;
     int nfds = 0, i = 0;
     //pthread_t thread_id;
@@ -310,7 +404,9 @@ void handleConnections(int sd)
 
     FD_SET(sd, &set);
     nfds = sd;        // larget file descriptor
-    
+   
+    graph = createGraph(20);
+ 
     while(1)
     {
         t_set = set; // repopulate temp set with sockets of interest
@@ -329,6 +425,9 @@ void handleConnections(int sd)
                 {
                     clientSocket = tcpAccept(sd, DEBUG_FLAG);
 
+                    addEdge(graph, switchID, switchID, clientSocket); 
+                    switchID++;
+
                     FD_SET(clientSocket, &set);
 
                     if (nfds < clientSocket) nfds = clientSocket;
@@ -344,7 +443,7 @@ void handleConnections(int sd)
 
                 else 
                 {
-                    // Turned for for pthread_implementation
+                    // Turned off for pthread_implementation
                     recvData(i);
                 }
             }
