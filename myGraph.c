@@ -58,3 +58,14 @@ void printGraph(struct Graph * graph)
         printf("\n");
     }
 }
+
+void addPathNode(struct PathNode * nodes, uint8_t * to_mac, uint16_t port)
+{
+    struct PathNode * newNode = (struct PathNode *) smartalloc(
+            sizeof(struct PathNode), "mygraph.c", 65, '\0');
+    memcpy(newNode->to_mac, to_mac, 6);
+    newNode->port = port;
+
+    newNode->next = nodes->next;
+    nodes->next = newNode;
+}  

@@ -36,6 +36,9 @@
 #define OF_PACKET_IN 10
 #define OF_PORT_STATUS 12
 
+#define PKT_OUT_HDR_LEN 24
+#define OFP_FLOWMOD_LEN 80
+
 /* Ethernet Header */
 struct ethernet_header {
     uint8_t dest[MAC_ADDR_LEN];

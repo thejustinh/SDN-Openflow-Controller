@@ -14,7 +14,9 @@
 #define DEBUG_FLAG 1
 
 int sd = 0; // Server socket
+uint32_t xid = 1;
 struct Graph * graph; // global graph
+struct PathNode * nodes;
 
 /**
  * Method to test if we are receiving OpenFlow packets correctly.
@@ -107,7 +109,7 @@ void estOFConnection(int clientSocket, struct ofp_header * recvHello)
     sendHello.version = (uint8_t)1;
     sendHello.type = (uint8_t)0;
     sendHello.length = htons((uint16_t)8);
-    sendHello.xid = recvHello->xid;
+    sendHello.xid = htonl(xid);
     memcpy(hPacket, &sendHello, 8);
 
     if (send(clientSocket, hPacket, sizeof(hPacket), 0) < 0) 
@@ -116,10 +118,11 @@ void estOFConnection(int clientSocket, struct ofp_header * recvHello)
         exit(-1);
     }
 
+    xid++;
     sendFeatures.version = (uint8_t)1;
     sendFeatures.type = (uint8_t)5;
     sendFeatures.length = htons((uint16_t)8);
-    sendFeatures.xid = htonl((uint32_t)2323);
+    sendFeatures.xid = htonl(xid);
     memcpy(frequestPacket, &sendFeatures, 8);
 
     if (send(clientSocket, frequestPacket, OFP_HDR_LEN, 0) < 0)
@@ -127,10 +130,11 @@ void estOFConnection(int clientSocket, struct ofp_header * recvHello)
         perror("send call");
         exit(-1);
     }
+    xid++;
 }
 
 /** 
- * Method to send out a Set Config OpenFlow Packet.
+ * Method to send out a Set Config OpenFlow Packet, Flow Mod, and Barrier Req
  *
  * @param clientSocket
  **/
@@ -138,18 +142,27 @@ void setConfig(int clientSocket)
 {
     uint8_t cPacket[12];
     uint8_t bPacket[OFP_HDR_LEN];
+    uint8_t fPacket[72];
     struct ofp_header sendConfig;
     struct ofp_header sendBarrier;
+//    struct ofp_header sendFlowMod;
     uint16_t configFlag = htons(0x0000);
     uint16_t maxBytes = htons(0x0080);
+/*    uint32_t wildcard = htonl(1048607); // 0x0010001f mask
+    uint16_t command = htons(3); // Delete all matching flows
+    uint16_t priority = htons(32768);
+    uint32_t bufferID = htonl(0xffffffff);
+    uint16_t outPort = htons(0xffff);
+*/
 
     memset(cPacket, 0, 12);
     memset(bPacket, 0, OFP_HDR_LEN);
+    memset(fPacket, 0, 72);
 
     sendConfig.version = (uint8_t)1;
     sendConfig.type = (uint8_t)9;
     sendConfig.length = htons((uint16_t)12);
-    sendConfig.xid = htonl((uint32_t)3);
+    sendConfig.xid = htonl(xid);
     memcpy(cPacket, &sendConfig, 8);
     memcpy(cPacket + 8, &configFlag, 2);
     memcpy(cPacket + 10, &maxBytes, 2);
@@ -161,13 +174,32 @@ void setConfig(int clientSocket)
         perror("send call");
         exit(-1);
     }
+    xid++;
     //printf("---->>Sent config setup!!!!\n");
 
+/*
+    sendFlowMod.version = (uint8_t)1;
+    sendFlowMod.type = (uint8_t)14;
+    sendFlowMod.length = htons((uint16_t) 72);
+    sendFlowMod.length = htonl((uint32_t) 4);
+    memcpy(fPacket, &sendFlowMod, OFP_HDR_LEN);
+    memcpy(fPacket + 8, &wildcard, 4);
+    memcpy(fPacket + 56, &command, 2);
+    memcpy(fPacket + 62, &priority, 2);
+    memcpy(fPacket + 64, &bufferID, 4);
+    memcpy(fPacket + 68, &outPort, 2);
 
+
+    if (send(clientSocket, fPacket, sizeof(fPacket), 0) < 0)
+    {
+        perror("send call");
+        exit(-1);
+    }
+*/
     sendBarrier.version = (uint8_t)1;
     sendBarrier.type = (uint8_t)18;
     sendBarrier.length = htons((uint16_t)8);
-    sendBarrier.xid = htonl((uint32_t)5);
+    sendBarrier.xid = htonl(xid);
     memcpy(bPacket, &sendBarrier, 8);
 
     //printf("\n---->>Sending Barrier request packet..\n");
@@ -177,7 +209,7 @@ void setConfig(int clientSocket)
         exit(-1);
     }
     //printf("---->>Sent Barrier Requst!\n");
-
+    xid++;
 }
 
 /** 
@@ -208,63 +240,163 @@ void sendEchoReply(int clientSocket, struct ofp_header * ofp_hdr)
 
 
 /**
- * Method to determine the ETHERTYPE of payload 
+ * Method to determine if payload is an ARP Reply 
  *
- * @param payload of openflow packet which is the ethernet frame
+ * @param payload of openflow packet in which is the ethernet frame
  **/
+int isArpReply(uint8_t * payload)
+{
+    uint16_t arp_code = 0x0806;
+    uint16_t arp_opcode = 0x0002;
+    uint16_t received_arp_code;
+    uint16_t received_arp_opcode;
+
+    memcpy(&received_arp_code, payload + 12, 2);
+    
+    if (ntohs(received_arp_code) != arp_code)
+        return 0; // ETHERTYPE is not an ARP
+
+    memcpy(&received_arp_opcode, payload + 20, 2);
+
+    if (ntohs(received_arp_opcode) != arp_opcode)
+        return 0; // ARP is not a reply
+    
+    return 1; // payload is arp reply
+}
+
+/**
+ * Method to find the port that a host resides on given a mac address
+ **/
+uint16_t findPort(uint8_t * mac)
+{
+    struct PathNode * cur = nodes->next;
+
+    while (cur != NULL) {
+        if (memcmp(mac, cur->to_mac, MAC_ADDR_LEN) == 0)
+            return cur->port;
+        cur = cur->next;
+    }
+
+    // Did not find port
+    printf("Could not find port in findPort()\n");
+    return 0;
+}
 
 
 /**
- * Method to create packet out
+ * Method to send bidirectional flow of an arp request.
  **/
-void makeSendPacketOut(int clientSocket, struct ofp_packet_out * pkt_out, 
-        uint8_t * packet, uint8_t * payload, int packetLen, uint16_t output_port)
+void establishFlows(int clientSocket, struct ofp_packet_in * pkt_in)
 {
-    uint8_t raw_pkt_in[packetLen]; 
-    uint16_t pkt_out_len;
-    uint16_t actions_len = (uint16_t)8;
-    uint16_t actions_type = (uint16_t) 0x0000;
-    uint8_t raw_action_hdr[sizeof(actions_len)];
-    uint32_t buffer_id = 0xffffffff;
-    static uint32_t xid = 15;
-    struct ofp_action_header * action_hdr;
-    struct ofp_packet_in * pkt_in;
+    struct ofp_header flowmod_hdr;
+    uint8_t raw_flowmod[OFP_FLOWMOD_LEN];
+    
+    uint16_t length = (uint16_t)OFP_FLOWMOD_LEN;
+    uint32_t new_xid;
+    uint32_t wildcard = htonl(0x00100013);
+    uint16_t priority = htons(0x8000);
+    uint32_t buffer_id = htonl(0xffffffff);
+    uint16_t out_port = htons(0xffff);
+    uint16_t action_type = htons(0x0000);
+    uint16_t action_length = htons(0x0008);
+    uint16_t port = pkt_in->in_port;
+    uint8_t to_mac[MAC_ADDR_LEN];
 
-    memcpy(raw_pkt_in, packet, OFP_HDR_LEN);
-    memcpy(raw_pkt_in + OFP_HDR_LEN, payload, packetLen - OFP_HDR_LEN);
-    pkt_in = (struct ofp_packet_in *) raw_pkt_in; 
+    memset(to_mac, 0, MAC_ADDR_LEN);
+    memset(raw_flowmod, 0, OFP_FLOWMOD_LEN);
 
-    /* Action Struct */
-    memset(raw_action_hdr, 0, sizeof(actions_len));
-    memcpy(raw_action_hdr, &actions_len, 2);
-    memcpy(raw_action_hdr + 2, &actions_type, 2);
-    memcpy(raw_action_hdr + 4, &actions_len, 2);
-    memcpy(raw_action_hdr + 6, &output_port, 2);
-    action_hdr = (struct ofp_action_header *) raw_action_hdr;
-
-    /* PACKET OUT HDR */
-    pkt_out->header.version = (uint8_t)1;
-    pkt_out->header.type = (uint8_t)13;
-    pkt_out_len = OFP_HDR_LEN + sizeof(buffer_id) + sizeof(pkt_in->in_port) +
-        sizeof(actions_len) + sizeof(action_hdr) + ntohs(pkt_in->total_len);
-    pkt_out->header.length = htons((uint16_t) pkt_out_len);
-    pkt_out->header.xid = htonl((uint32_t) xid);
-
-    /* PACKET OUT STRUCT */    
-    pkt_out->buffer_id = htonl(buffer_id);
-    pkt_out->in_port = pkt_in->in_port;
-    pkt_out->actions_len = htons(actions_len);
-    memcpy(pkt_out->actions, raw_action_hdr, sizeof(raw_action_hdr));
-    memcpy(pkt_out->data, payload, packetLen - OFP_HDR_LEN);
-
-
-    // send packet out to switch socket
-    if (send(clientSocket, pkt_out, sizeof(pkt_out), 0) < 0) 
+    /* Build and Send Flow 1 */
+    printf("Building flow mod 1: A..\n");
+    flowmod_hdr.version = (uint8_t)1;
+    flowmod_hdr.type = (uint8_t)14; // flowmod type
+    flowmod_hdr.length = htons((uint16_t) length);
+    flowmod_hdr.xid = htonl(xid);
+    memcpy(raw_flowmod, &flowmod_hdr, OFP_HDR_LEN);
+    memcpy(raw_flowmod + 8, &wildcard, 4);
+    memcpy(raw_flowmod + 14, pkt_in->data, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 20, pkt_in->data + 6, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 62, &priority, 2);
+    memcpy(raw_flowmod + 64, &buffer_id, 4);
+    memcpy(raw_flowmod + 68, &out_port, 2);
+    memcpy(raw_flowmod + 72, &action_type, 2);
+    memcpy(raw_flowmod + 74, &action_length, 2);
+    memcpy(raw_flowmod + 76, &port, 2);
+    
+    printf("flow mod 1: A built\n");
+    if (send(clientSocket, raw_flowmod, sizeof(raw_flowmod), 0) < 0) 
     {
         perror("send call");
         exit(-1);
     }
-    
+    printf("flow mod 1: a SENT!!\n");
+
+
+    printf("Building flow mod 2: B..\n");
+    /* Build and Send Opposite of Flow 1 */
+    xid++;
+    new_xid = htonl(xid);
+    memcpy(to_mac, pkt_in->data, MAC_ADDR_LEN);
+    port = htons(findPort(to_mac));
+    memcpy(raw_flowmod + 4, &new_xid, 4);
+    memcpy(raw_flowmod + 14, pkt_in->data + 6, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 20, pkt_in->data, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 76, &port, 2);
+
+    printf("flow mod 2: B built\n");
+    if (send(clientSocket, raw_flowmod, sizeof(raw_flowmod), 0) < 0) 
+    {
+        perror("send call");
+        exit(-1);
+    }
+    printf("flow mod 2: B SENT!!\n");
+    xid++;
+}
+
+/**
+ * Method to create packet out
+ **/
+void makeSendPacketOut(int clientSocket, struct ofp_packet_in * pkt_in,
+        uint16_t output_port)
+{
+    uint16_t pkt_out_len = PKT_OUT_HDR_LEN + ntohs(pkt_in->total_len);
+    uint32_t buffer_id = htonl(0xffffffff);
+    uint16_t in_port = pkt_in->in_port;
+    uint16_t actions_len = htons((uint16_t)8);
+    uint16_t actions_type = htons((uint16_t) 0x0000);
+    struct ofp_header pkt_out_hdr;
+
+    uint8_t raw_pkt_out[pkt_out_len];
+    memset(raw_pkt_out, 0, pkt_out_len);
+
+    printf("\tBuilding Packet Out of length: %d\n", pkt_out_len);
+
+    /* PACKET OUT HDR */
+    pkt_out_hdr.version = (uint8_t)1;
+    pkt_out_hdr.type = (uint8_t)13;
+    pkt_out_hdr.length = htons((uint16_t) pkt_out_len);
+    pkt_out_hdr.xid = htonl(xid);
+    memcpy(raw_pkt_out, &pkt_out_hdr, OFP_HDR_LEN);
+    memcpy(raw_pkt_out + 8, &buffer_id, 4);
+    memcpy(raw_pkt_out + 12, &in_port, 2);
+    memcpy(raw_pkt_out + 14, &actions_len, 2);
+    memcpy(raw_pkt_out + 16, &actions_type, 2);
+    memcpy(raw_pkt_out + 18, &actions_len, 2);
+    memcpy(raw_pkt_out + 20, &output_port, 2);
+
+    /* PACKET OUT DATA */
+    memcpy(raw_pkt_out + 24, pkt_in->data, ntohs(pkt_in->total_len));
+
+    printf("\tBuilt\n");
+
+    // send packet out to switch socket
+    if (send(clientSocket, raw_pkt_out, sizeof(raw_pkt_out), 0) < 0) 
+    {
+        perror("send call");
+        exit(-1);
+    }
+  
+    xid++; 
+    printf("Packet out sent!!!\n"); 
 }
 
 /**
@@ -277,9 +409,11 @@ void makeSendPacketOut(int clientSocket, struct ofp_packet_out * pkt_out,
 void handlePacketIn(int clientSocket, uint8_t *packet, 
         uint8_t * payload, int packetLen)
 {
-    uint8_t raw_pkt_in[packetLen]; 
+    uint8_t raw_pkt_in[packetLen]; // total length of packet in hdr + payload 
+    uint8_t to_mac[MAC_ADDR_LEN];
     struct ofp_packet_in * pkt_in;
-    struct ofp_packet_out * pkt_out = smartalloc(sizeof(* pkt_out), "controller.c", 242, '\0');
+
+    // Repack raw packet into Packet In struct
     memcpy(raw_pkt_in, packet, OFP_HDR_LEN);
     memcpy(raw_pkt_in + OFP_HDR_LEN, payload, packetLen - OFP_HDR_LEN);
     
@@ -295,11 +429,22 @@ void handlePacketIn(int clientSocket, uint8_t *packet,
         printf("\tACTION\n");
     }
 
-    // make packet out with output port of flood (0xfffb) 
-    makeSendPacketOut(clientSocket, pkt_out, packet, payload, 
-        packetLen, (uint16_t)0xfffb);
-}
+    // Add a Host/Port to the list. (Host resides at port x)
+    memset(to_mac, 0, MAC_ADDR_LEN);
+    memcpy(to_mac, pkt_in->data + 6, MAC_ADDR_LEN);
+    addPathNode(nodes, to_mac,ntohs(pkt_in->in_port)); 
 
+    // if arp reply is received, connection now flows two ways.
+    if (isArpReply(pkt_in->data) == 1) {
+        printf("\tARP REPLY\n");
+        printf("\tEstablishing two way flows...\n");
+        establishFlows(clientSocket, pkt_in);
+        makeSendPacketOut(clientSocket, pkt_in, htons((uint16_t)0xfff9));
+    } else {
+        // make pkt out with output port of flood (0xfffb) ONLY FOR BROADCAST   
+        makeSendPacketOut(clientSocket, pkt_in, htons((uint16_t)0xfffb));
+    }
+}
 /**
  * Method to receive data from socket.
  *
@@ -350,7 +495,7 @@ int recvData(int clientSocket)
         estOFConnection(clientSocket, ofp_hdr);
     } else if (type == OF_FEATURE_REPLY) {
         reportFeatures(ofp_hdr, payload);
-        //setConfig(clientSocket);
+        setConfig(clientSocket);
     } else if (type == OF_ECHO_REQUEST) {
         sendEchoReply(clientSocket, ofp_hdr);
     } else if (type == OF_PACKET_IN) {
@@ -361,7 +506,7 @@ int recvData(int clientSocket)
         //    printf("send packet out with 0xfff9 as output port\n");
         //} else {
             // packet outs will be flooded
-            handlePacketIn(clientSocket, packet, payload, packetLen);
+        handlePacketIn(clientSocket, packet, payload, packetLen);
         //}
     } else if (type == OF_PORT_STATUS) {
         reportPort(ofp_hdr, payload);
@@ -406,7 +551,9 @@ void handleConnections(int sd)
     nfds = sd;        // larget file descriptor
    
     graph = createGraph(20);
- 
+    nodes = (struct PathNode *) smartalloc(sizeof(struct PathNode), 
+            "controller.c", 515, '\0'); 
+
     while(1)
     {
         t_set = set; // repopulate temp set with sockets of interest
