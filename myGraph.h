@@ -19,6 +19,14 @@ struct PathNode
     struct PathNode * next;
 };
 
+/* A structure to represent a link list of linked lists */
+struct ListOfLists
+{
+    int socket;
+    struct PathNode * head;
+    struct LostOfLists * next;
+}
+
 /* A structure to represent an adjacency list */
 struct AdjList
 {

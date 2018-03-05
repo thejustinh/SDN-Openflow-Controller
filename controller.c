@@ -15,8 +15,7 @@
 
 int sd = 0; // Server socket
 uint32_t xid = 1;
-struct Graph * graph; // global graph
-struct PathNode * nodes;
+struct ListOfLists * ll;
 
 /**
  * Method to test if we are receiving OpenFlow packets correctly.
@@ -267,13 +266,24 @@ int isArpReply(uint8_t * payload)
 /**
  * Method to find the port that a host resides on given a mac address
  **/
-uint16_t findPort(uint8_t * mac)
+uint16_t findPort(int clientSocket, uint8_t * mac)
 {
-    struct PathNode * cur = nodes->next;
+    struct ListOfLists * cur = ll;
+    struct PathNode * node;
 
+    /* Loop thorugh outer linked list filtering for client socket */
     while (cur != NULL) {
-        if (memcmp(mac, cur->to_mac, MAC_ADDR_LEN) == 0)
-            return cur->port;
+
+        /* If switch (client socket) is found, loop inner LL-> find port. */
+        if (cur->socket == clientSocket) {
+            node = cur->head;
+            while (node != NULL) {
+                if (memcmp(mac, node->to_mac, MAC_ADDR_LEN) == 0)
+                    return node->port;
+                node = node->next;
+            }
+            return 0;
+        }
         cur = cur->next;
     }
 
@@ -550,8 +560,7 @@ void handleConnections(int sd)
     FD_SET(sd, &set);
     nfds = sd;        // larget file descriptor
    
-    graph = createGraph(20);
-    nodes = (struct PathNode *) smartalloc(sizeof(struct PathNode), 
+    ll = (struct ListOfLists *) smartalloc(sizeof(struct ListOfLists), 
             "controller.c", 515, '\0'); 
 
     while(1)
@@ -572,7 +581,6 @@ void handleConnections(int sd)
                 {
                     clientSocket = tcpAccept(sd, DEBUG_FLAG);
 
-                    addEdge(graph, switchID, switchID, clientSocket); 
                     switchID++;
 
                     FD_SET(clientSocket, &set);

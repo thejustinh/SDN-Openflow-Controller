@@ -59,10 +59,42 @@ void printGraph(struct Graph * graph)
     }
 }
 
-void addPathNode(struct PathNode * nodes, uint8_t * to_mac, uint16_t port)
+
+/* Method to return 1 if a mac address exists*/
+int findNode(struct PathNode * nodes, uint8_t * to_mac)
 {
-    struct PathNode * newNode = (struct PathNode *) smartalloc(
-            sizeof(struct PathNode), "mygraph.c", 65, '\0');
+    struct PathNode * cur = nodes->next;
+    while (cur != NULL) {
+        if (memcmp(cur->to_mac, to_mac, 6) == 0)
+            return 1;
+        cur = cur->next;
+    }
+
+    return 0; // No existing node found
+}
+
+void addPathNode(int socket, struct ListOfLists * ll, uint8_t * to_mac, uint16_t port)
+{
+    struct PathNode * newNode;
+    struct ListOfLists * listHead;
+    struct ListOfLists * cur = ll;
+
+    /* Nothing in the socket list */
+    if (cur->head == NULL) {
+       listHead = (struct ListOfLists *) smartalloc(sizeof(struct ListOfLists),
+           "mygraph.c", "85", '\0');    
+    } else {
+        while (cur->next != NULL) {
+            if (cur->socket == socket)
+                break;
+            cur = cur->next;
+
+        }   
+    }
+
+    newNode = (struct PathNode *) smartalloc(sizeof(struct PathNode), 
+            "mygraph.c", 65, '\0');
+    
     memcpy(newNode->to_mac, to_mac, 6);
     newNode->port = port;
 
