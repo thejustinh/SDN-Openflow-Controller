@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <netinet/ether.h>
 #include <sys/types.h>
 #include <inttypes.h>
 #include <string.h>

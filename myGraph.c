@@ -61,12 +61,20 @@ void printGraph(struct Graph * graph)
 
 
 /* Method to return 1 if a mac address exists*/
-int findNode(struct PathNode * nodes, uint8_t * to_mac)
+int findNode(int socket, struct ListOfLists * ll, uint8_t * to_mac)
 {
-    struct PathNode * cur = nodes->next;
+    struct ListOfLists * cur = ll;
+    struct PathNode * cur_node;
+
     while (cur != NULL) {
-        if (memcmp(cur->to_mac, to_mac, 6) == 0)
-            return 1;
+        if (cur->socket == socket) {
+            cur_node = cur->head;
+            while(cur_node != NULL) {
+                if (memcmp(cur_node->to_mac, to_mac, 6) == 0)
+                    return 1;
+                cur_node = cur_node->next;
+            }
+        }
         cur = cur->next;
     }
 
@@ -77,27 +85,45 @@ void addPathNode(int socket, struct ListOfLists * ll, uint8_t * to_mac, uint16_t
 {
     struct PathNode * newNode;
     struct ListOfLists * listHead;
-    struct ListOfLists * cur = ll;
+    struct ListOfLists * cur;
 
-    /* Nothing in the socket list */
-    if (cur->head == NULL) {
-       listHead = (struct ListOfLists *) smartalloc(sizeof(struct ListOfLists),
-           "mygraph.c", "85", '\0');    
-    } else {
-        while (cur->next != NULL) {
-            if (cur->socket == socket)
-                break;
+    /* PathNode already exists, no need to add */
+    if (findNode(socket, ll, to_mac) == 1)
+        return;
+
+    /* Nothing in outer loop (socket list) */
+    if (ll == NULL) {
+       listHead = (struct ListOfLists *) smartalloc(sizeof(struct ListOfLists),"mygraph.c", 84, '\0');    
+       listHead->socket = socket;
+       listHead->head = NULL;
+       listHead->next = NULL;
+       ll = listHead;
+    } 
+
+    /* Find the inner linked list given a socket # */
+    cur = ll;
+    while (cur != NULL) {
+        if (cur->socket == socket) {
+            break;
+        }
+        if (cur->next == NULL) {
+            listHead = (struct ListOfLists *) smartalloc(sizeof(struct ListOfLists), "mygraph.c", 98, '\0');    
+            listHead->socket = socket;
+            listHead->head = NULL;
+            listHead->next = NULL;
+            cur->next = listHead;
             cur = cur->next;
-
-        }   
-    }
+            break;
+        }
+        cur = cur->next;
+    }   
 
     newNode = (struct PathNode *) smartalloc(sizeof(struct PathNode), 
-            "mygraph.c", 65, '\0');
+            "mygraph.c", 110, '\0');
     
     memcpy(newNode->to_mac, to_mac, 6);
     newNode->port = port;
 
-    newNode->next = nodes->next;
-    nodes->next = newNode;
+    newNode->next = cur->head;
+    cur->head = newNode;
 }  

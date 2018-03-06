@@ -36,6 +36,28 @@ void printOFPHdr(struct ofp_header * ofp_hdr)
 }
 
 /**
+ * Method to test our graph
+ **/
+void printLL()
+{
+    struct ListOfLists * cur = ll;
+    struct PathNode * cur_node;
+
+    printf("****** Data Structure ******\n");
+    while (cur != NULL) {
+        printf("Switch: %d\n", cur->socket);
+        cur_node = cur->head;    
+        while (cur_node != NULL) {
+            printf("\tTo %s, take %d\n", ether_ntoa((struct ether_addr *)cur_node->to_mac), cur_node->port);
+            cur_node = cur_node->next;
+        }
+        cur = cur->next;
+    }
+    
+    printf("****************************\n");
+}
+
+/**
  * This method prints the link state changes of ports on the switch
  *
  * @param OpenFlow Header struct
@@ -346,7 +368,7 @@ void establishFlows(int clientSocket, struct ofp_packet_in * pkt_in)
     xid++;
     new_xid = htonl(xid);
     memcpy(to_mac, pkt_in->data, MAC_ADDR_LEN);
-    port = htons(findPort(to_mac));
+    port = htons(findPort(clientSocket, to_mac));
     memcpy(raw_flowmod + 4, &new_xid, 4);
     memcpy(raw_flowmod + 14, pkt_in->data + 6, MAC_ADDR_LEN);
     memcpy(raw_flowmod + 20, pkt_in->data, MAC_ADDR_LEN);
@@ -442,8 +464,8 @@ void handlePacketIn(int clientSocket, uint8_t *packet,
     // Add a Host/Port to the list. (Host resides at port x)
     memset(to_mac, 0, MAC_ADDR_LEN);
     memcpy(to_mac, pkt_in->data + 6, MAC_ADDR_LEN);
-    addPathNode(nodes, to_mac,ntohs(pkt_in->in_port)); 
-
+    addPathNode(clientSocket, ll, to_mac,ntohs(pkt_in->in_port)); 
+    printLL();
     // if arp reply is received, connection now flows two ways.
     if (isArpReply(pkt_in->data) == 1) {
         printf("\tARP REPLY\n");

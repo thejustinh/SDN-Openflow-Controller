@@ -24,8 +24,8 @@ struct ListOfLists
 {
     int socket;
     struct PathNode * head;
-    struct LostOfLists * next;
-}
+    struct ListOfLists * next;
+};
 
 /* A structure to represent an adjacency list */
 struct AdjList
@@ -53,4 +53,4 @@ void addEdge(struct Graph * graph, int src, int dest, int destPort);
 /* Method to print graph */
 void printGraph(struct Graph * graph);
 
-void addPathNode(struct PathNode * nodes, uint8_t * to_mac, uint16_t port);
+void addPathNode(int socket, struct ListOfLists * ll, uint8_t * to_mac, uint16_t port);
