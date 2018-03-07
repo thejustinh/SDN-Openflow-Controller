@@ -16,6 +16,7 @@
 int sd = 0; // Server socket
 uint32_t xid = 1;
 struct ListOfLists * ll;
+struct ListOfFlows * flows;
 
 /**
  * Method to test if we are receiving OpenFlow packets correctly.
@@ -57,13 +58,94 @@ void printLL()
     printf("****************************\n");
 }
 
+void printFlows()
+{
+    struct ListOfFlows * cur = flows;
+    struct FlowNode * cur_node;
+
+    printf("****** Flow Table ******\n");
+    while (cur != NULL) {
+        printf("Switch: %d\n", cur->socket);
+        cur_node = cur->head;
+        while (cur_node != NULL) {
+            printf("\tSrc: %s || Dst: %s || Out: %d\n",
+                    ether_ntoa((struct ether_addr *)cur_node->src_mac),
+                    ether_ntoa((struct ether_addr *)cur_node->dst_mac),
+                    cur_node->port);
+            cur_node = cur_node->next;
+        }
+        cur = cur->next;
+    }
+    
+    printf("****************************\n");
+}
+
+/** 
+ * Method to remove flow mod when link goes down
+ **/
+void removeFlow(int socket, uint16_t port)
+{
+    struct FlowNode * removeNode;
+    struct ofp_header flowmod_hdr;
+    uint8_t raw_flowmod[OFP_FLOWMOD_LEN];
+    
+    uint16_t length = (uint16_t)OFP_FLOWMOD_LEN;
+    uint32_t wildcard = htonl(0x00100013);
+    uint16_t priority = htons(0x8000);
+    uint32_t buffer_id = htonl(0xffffffff);
+    uint16_t out_port = htons(0xffff);
+    uint16_t action_type = htons(0x0003); 
+    uint16_t action_length = htons(0x0008);
+    uint16_t send_port;
+
+    //printf("In removeFlow()\n");
+    //printFlows();
+
+    removeNode = findRemoveNode(socket, flows, port);
+    if (removeNode == NULL) {
+        //printf("Local Flow table at Switch %d has no port %d\n.", socket, port);
+        //printf("Must be readding back link\n");
+        return;
+    }
+
+    send_port = htons(removeNode->port);
+    
+    memset(raw_flowmod, 0, OFP_FLOWMOD_LEN);
+
+    flowmod_hdr.version = (uint8_t)1;
+    flowmod_hdr.type = (uint8_t)14; // flowmod type
+    flowmod_hdr.length = htons((uint16_t) length);
+    flowmod_hdr.xid = htonl(xid);
+    memcpy(raw_flowmod, &flowmod_hdr, OFP_HDR_LEN);
+    memcpy(raw_flowmod + 8, &wildcard, 4);
+    memcpy(raw_flowmod + 14, removeNode->src_mac, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 20, removeNode->dst_mac, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 62, &priority, 2);
+    memcpy(raw_flowmod + 64, &buffer_id, 4);
+    memcpy(raw_flowmod + 68, &out_port, 2);
+    memcpy(raw_flowmod + 72, &action_type, 2);
+    memcpy(raw_flowmod + 74, &action_length, 2);
+    memcpy(raw_flowmod + 76, &send_port, 2);
+   
+    if (send(socket, raw_flowmod, sizeof(raw_flowmod), 0) < 0) 
+    {
+        perror("send call");
+        exit(-1);
+    }
+    xid++;
+
+    smartfree(removeNode, "controller.c", 136);
+    //printf("Successfully removed flow\n");
+    //printFlows();
+}
+    
 /**
  * This method prints the link state changes of ports on the switch
  *
  * @param OpenFlow Header struct
  * @param payload from OpenFlow packet
  **/
-void reportPort(struct ofp_header * ofp_hdr, uint8_t * payload)
+void reportPort(int socket, struct ofp_header * ofp_hdr, uint8_t * payload)
 {
     uint8_t reason = payload[0];
     uint16_t portNum;
@@ -72,12 +154,14 @@ void reportPort(struct ofp_header * ofp_hdr, uint8_t * payload)
 
     printf("Link state change: ");
     if (reason == 0x00)
-        printf("added ");
+        printf("added port number %d\n", ntohs(portNum));
     else if (reason == 0x01)
-        printf("deleted ");
-    else
-        printf("modified ");
-    printf("port number %d\n", ntohs(portNum));
+        printf("deleted port number %d\n", ntohs(portNum));
+    else {
+        printf("modified port number %d\n", ntohs(portNum));
+        //removeFlow(socket, ntohs(portNum));
+    }
+    
 }
 
 /**
@@ -332,13 +416,14 @@ void establishFlows(int clientSocket, struct ofp_packet_in * pkt_in)
     uint16_t action_type = htons(0x0000);
     uint16_t action_length = htons(0x0008);
     uint16_t port = pkt_in->in_port;
-    uint8_t to_mac[MAC_ADDR_LEN];
+    uint8_t dst_mac[MAC_ADDR_LEN];
+    uint8_t src_mac[MAC_ADDR_LEN];
 
-    memset(to_mac, 0, MAC_ADDR_LEN);
+    memset(dst_mac, 0, MAC_ADDR_LEN);
     memset(raw_flowmod, 0, OFP_FLOWMOD_LEN);
 
     /* Build and Send Flow 1 */
-    printf("Building flow mod 1: A..\n");
+    //printf("Building flow mod 1: A..\n");
     flowmod_hdr.version = (uint8_t)1;
     flowmod_hdr.type = (uint8_t)14; // flowmod type
     flowmod_hdr.length = htons((uint16_t) length);
@@ -353,35 +438,53 @@ void establishFlows(int clientSocket, struct ofp_packet_in * pkt_in)
     memcpy(raw_flowmod + 72, &action_type, 2);
     memcpy(raw_flowmod + 74, &action_length, 2);
     memcpy(raw_flowmod + 76, &port, 2);
-    
-    printf("flow mod 1: A built\n");
+
+    // Save Flow to local flow table
+    memcpy(src_mac, raw_flowmod + 14, MAC_ADDR_LEN);
+    memcpy(dst_mac, raw_flowmod + 20, MAC_ADDR_LEN);
+    port = ntohs(pkt_in->in_port);
+    printf("before add flow 1\n");
+    addFlowNode(clientSocket, flows, dst_mac, src_mac, port);
+    printf("after add flow 1\n");
+
+    //printf("flow mod 1: A built\n");
     if (send(clientSocket, raw_flowmod, sizeof(raw_flowmod), 0) < 0) 
     {
         perror("send call");
         exit(-1);
     }
-    printf("flow mod 1: a SENT!!\n");
+    //printf("flow mod 1: a SENT!!\n");
 
 
-    printf("Building flow mod 2: B..\n");
+    //printf("Building flow mod 2: B..\n");
     /* Build and Send Opposite of Flow 1 */
     xid++;
     new_xid = htonl(xid);
-    memcpy(to_mac, pkt_in->data, MAC_ADDR_LEN);
-    port = htons(findPort(clientSocket, to_mac));
+    memcpy(dst_mac, pkt_in->data, MAC_ADDR_LEN);
+    port = htons(findPort(clientSocket, dst_mac));
     memcpy(raw_flowmod + 4, &new_xid, 4);
     memcpy(raw_flowmod + 14, pkt_in->data + 6, MAC_ADDR_LEN);
     memcpy(raw_flowmod + 20, pkt_in->data, MAC_ADDR_LEN);
     memcpy(raw_flowmod + 76, &port, 2);
 
-    printf("flow mod 2: B built\n");
+    // Save flow 2 to local flow table
+    memcpy(src_mac, raw_flowmod + 14, MAC_ADDR_LEN);
+    memcpy(dst_mac, raw_flowmod + 20, MAC_ADDR_LEN);
+    port = findPort(clientSocket, dst_mac);
+    
+    printf("before add flow 1\n");
+    addFlowNode(clientSocket, flows, dst_mac, src_mac, port);
+    printf("after add flow 2\n");
+    //printf("flow mod 2: B built\n");
     if (send(clientSocket, raw_flowmod, sizeof(raw_flowmod), 0) < 0) 
     {
         perror("send call");
         exit(-1);
     }
-    printf("flow mod 2: B SENT!!\n");
+    //printf("flow mod 2: B SENT!!\n");
     xid++;
+
+    //printFlows();
 }
 
 /**
@@ -400,7 +503,7 @@ void makeSendPacketOut(int clientSocket, struct ofp_packet_in * pkt_in,
     uint8_t raw_pkt_out[pkt_out_len];
     memset(raw_pkt_out, 0, pkt_out_len);
 
-    printf("\tBuilding Packet Out of length: %d\n", pkt_out_len);
+    //printf("\tBuilding Packet Out of length: %d\n", pkt_out_len);
 
     /* PACKET OUT HDR */
     pkt_out_hdr.version = (uint8_t)1;
@@ -418,7 +521,7 @@ void makeSendPacketOut(int clientSocket, struct ofp_packet_in * pkt_in,
     /* PACKET OUT DATA */
     memcpy(raw_pkt_out + 24, pkt_in->data, ntohs(pkt_in->total_len));
 
-    printf("\tBuilt\n");
+    //printf("\tBuilt\n");
 
     // send packet out to switch socket
     if (send(clientSocket, raw_pkt_out, sizeof(raw_pkt_out), 0) < 0) 
@@ -428,7 +531,96 @@ void makeSendPacketOut(int clientSocket, struct ofp_packet_in * pkt_in,
     }
   
     xid++; 
-    printf("Packet out sent!!!\n"); 
+    //printf("Packet out sent!!!\n"); 
+}
+
+/**
+ * Method to send flow mod 
+ **/
+void sendLoopFlow(int clientSocket, struct ofp_packet_in * pkt_in)
+{
+    struct ofp_header flowmod_hdr;
+    uint8_t raw_flowmod[OFP_FLOWMOD_LEN];
+    
+    uint16_t length = (uint16_t)OFP_FLOWMOD_LEN;
+    uint32_t wildcard = htonl(0x00100013);
+    uint16_t priority = htons(0x8000);
+    uint32_t buffer_id = htonl(0xffffffff);
+    uint16_t out_port = htons(0xffff);
+    uint16_t action_type = htons(0x0000);
+    uint16_t action_length = htons(0x0008);
+    uint16_t port = pkt_in->in_port;
+    uint8_t dst_mac[MAC_ADDR_LEN];
+    uint8_t src_mac[MAC_ADDR_LEN];
+
+    memset(dst_mac, 0, MAC_ADDR_LEN);
+    memset(src_mac, 0, MAC_ADDR_LEN);
+    memset(raw_flowmod, 0, OFP_FLOWMOD_LEN);
+
+    /* Build and Send Flow 1 */
+    //printf("Building flow mod 1: A..\n");
+    flowmod_hdr.version = (uint8_t)1;
+    flowmod_hdr.type = (uint8_t)14; // flowmod type
+    flowmod_hdr.length = htons((uint16_t) length);
+    flowmod_hdr.xid = htonl(xid);
+    memcpy(raw_flowmod, &flowmod_hdr, OFP_HDR_LEN);
+    memcpy(raw_flowmod + 8, &wildcard, 4);
+    memcpy(raw_flowmod + 14, pkt_in->data, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 20, pkt_in->data + 6, MAC_ADDR_LEN);
+    memcpy(raw_flowmod + 62, &priority, 2);
+    memcpy(raw_flowmod + 64, &buffer_id, 4);
+    memcpy(raw_flowmod + 68, &out_port, 2);
+    memcpy(raw_flowmod + 72, &action_type, 2);
+    memcpy(raw_flowmod + 74, &action_length, 2);
+    memcpy(raw_flowmod + 76, &port, 2);
+
+    // Save Flow to local flow table
+    memcpy(src_mac, raw_flowmod + 14, MAC_ADDR_LEN);
+    memcpy(dst_mac, raw_flowmod + 20, MAC_ADDR_LEN);
+    port = ntohs(pkt_in->in_port);
+    addFlowNode(clientSocket, flows, dst_mac, src_mac, port);
+
+    //printf("flow mod 1: A built\n");
+    if (send(clientSocket, raw_flowmod, sizeof(raw_flowmod), 0) < 0) 
+    {
+        perror("send call");
+        exit(-1);
+    }
+    //printf("flow mod 1: a SENT!!\n");
+}
+
+/**
+ * Method to check if a received openflow packet is a loopback config packet
+ **/
+int isLoopback(uint8_t * payload)
+{
+    uint8_t dst_mac[MAC_ADDR_LEN];
+    uint8_t src_mac[MAC_ADDR_LEN];
+
+    memset(dst_mac, 0, MAC_ADDR_LEN);
+    memset(src_mac, 0, MAC_ADDR_LEN);
+
+    memcpy(dst_mac, payload, MAC_ADDR_LEN);
+    memcpy(src_mac, payload + MAC_ADDR_LEN, MAC_ADDR_LEN);
+
+    if (memcmp(dst_mac, src_mac, MAC_ADDR_LEN) == 0)
+        return 1; // Packet is loopback!
+
+    return 0;
+} 
+
+
+int isDup(int clientSocket, uint8_t * payload)
+{
+    uint8_t dst_mac[MAC_ADDR_LEN];
+
+    memset(dst_mac, 0, MAC_ADDR_LEN);
+    memcpy(dst_mac, payload, MAC_ADDR_LEN);
+
+    if (findNode(clientSocket, ll, dst_mac) == 1)
+       return 1; 
+
+    return 0; // Not a duplicate packet
 }
 
 /**
@@ -452,27 +644,38 @@ void handlePacketIn(int clientSocket, uint8_t *packet,
     // Get data from Packet In
     pkt_in = (struct ofp_packet_in *) raw_pkt_in; 
 
-    printf("\tTotal Length: %d\n", ntohs(pkt_in->total_len));
-    printf("\tIn Port: %d\n", ntohs(pkt_in->in_port));
+    //printf("\tTotal Length: %d\n", ntohs(pkt_in->total_len));
+    //printf("\tIn Port: %d\n", ntohs(pkt_in->in_port));
     if (pkt_in->reason == 0x00) {
-        printf("\tNO MATCHING FLOW\n");
+        //printf("\tNO MATCHING FLOW\n");
         return;
     } else {
-        printf("\tACTION\n");
+        //printf("\tACTION\n");
     }
 
     // Add a Host/Port to the list. (Host resides at port x)
     memset(to_mac, 0, MAC_ADDR_LEN);
     memcpy(to_mac, pkt_in->data + 6, MAC_ADDR_LEN);
-    addPathNode(clientSocket, ll, to_mac,ntohs(pkt_in->in_port)); 
-    printLL();
+    
+    // If the switch receives a packet in from a another switch that contains
+    // return address already in its known routes, drop that packet.
+    addPathNode(clientSocket, ll, to_mac,ntohs(pkt_in->in_port));
+
+
+    //printLL();
     // if arp reply is received, connection now flows two ways.
     if (isArpReply(pkt_in->data) == 1) {
-        printf("\tARP REPLY\n");
-        printf("\tEstablishing two way flows...\n");
+        //printf("\tARP REPLY\n");
+        //if (isDup(clientSocket, pkt_in->data) == 1)
+        //    return;
         establishFlows(clientSocket, pkt_in);
         makeSendPacketOut(clientSocket, pkt_in, htons((uint16_t)0xfff9));
-    } else {
+    } 
+    else if (isLoopback(pkt_in->data) == 1) {
+        sendLoopFlow(clientSocket, pkt_in);
+        printf("Sending Loopback FlowMod\n");
+    }
+    else {
         // make pkt out with output port of flood (0xfffb) ONLY FOR BROADCAST   
         makeSendPacketOut(clientSocket, pkt_in, htons((uint16_t)0xfffb));
     }
@@ -531,7 +734,7 @@ int recvData(int clientSocket)
     } else if (type == OF_ECHO_REQUEST) {
         sendEchoReply(clientSocket, ofp_hdr);
     } else if (type == OF_PACKET_IN) {
-        printf("RECEIVED PACKET_IN\n");
+        //printf("RECEIVED PACKET_IN\n");
         // Determine if payload is arp reply (reply -> send flow mod)
         //if (isArpReply(payload) == 1) {
         //    printf("Send Flow mod\n");
@@ -541,7 +744,7 @@ int recvData(int clientSocket)
         handlePacketIn(clientSocket, packet, payload, packetLen);
         //}
     } else if (type == OF_PORT_STATUS) {
-        reportPort(ofp_hdr, payload);
+        reportPort(clientSocket, ofp_hdr, payload);
     } else {
         // printf("not yet implemented\n"); 
         return 1;
@@ -584,6 +787,9 @@ void handleConnections(int sd)
    
     ll = (struct ListOfLists *) smartalloc(sizeof(struct ListOfLists), 
             "controller.c", 515, '\0'); 
+
+    flows = (struct ListOfFlows *) smartalloc(sizeof(struct ListOfFlows),
+            "controller.c", 678, '\0');
 
     while(1)
     {
@@ -631,11 +837,61 @@ void handleConnections(int sd)
 }
 
 /**
+ * Method to free structure
+ **/
+void freeLL()
+{
+    struct PathNode * tmp_node;
+    struct ListOfLists * tmp_ll;
+
+    if (ll == NULL)
+        return;
+    
+    while (ll != NULL)
+    {
+        tmp_ll = ll;
+        tmp_node = ll->head;
+        while (ll->head != NULL) {
+            tmp_node = ll->head;
+            ll->head = ll->head->next;
+            smartfree(tmp_node, "controller.c", 651);
+        }   
+        ll = ll->next;
+        smartfree(tmp_ll, "controller.c", 654);
+    }
+}
+
+void freeFlows()
+{
+    struct FlowNode * tmp_node;
+    struct ListOfFlows * tmp_ll;
+
+    if (flows == NULL)
+        return;
+    
+    while (flows != NULL)
+    {
+        tmp_ll = flows;
+        tmp_node = flows->head;
+        while (flows->head != NULL) {
+            tmp_node = flows->head;
+            flows->head = flows->head->next;
+            smartfree(tmp_node, "controller.c", 651);
+        }   
+        flows = flows->next;
+        smartfree(tmp_ll, "controller.c", 654);
+    }
+
+}
+
+/**
  * A method to catch SIGINT ctr-c and free socket descriptor
  **/
 void terminate()
 {
     close(sd);
+    freeLL();
+    freeFlows();
     exit(EXIT_SUCCESS);
 }
 
